@@ -1,64 +1,59 @@
 // create web server
-// 1. create http object
-const http = require('http');
-const fs = require('fs');
-const qs = require('querystring');
-const comments = [];
+// create a route
+// create a callback function
+// send back a response
 
-// 2. create web server object
-const server = http.createServer(function (req, res) {
-    // 3.1 get url
-    const url = req.url;
-    // 3.2 get method
-    const method = req.method;
-    // 3.3 set header
-    res.setHeader('Content-Type', 'text/html;charset=utf-8');
-    // 3.4 set router
-    if (url === '/') {
-        fs.readFile('./views/index.html', function (err, data) {
-            if (err) {
-                return res.end('404 Not Found');
-            }
-            // 3.4.1 get comments
-            let commentStr = '';
-            comments.forEach(function (item) {
-                commentStr += `
-                <li>
-                    <h3>${item.name}</h3>
-                    <p>${item.message}</p>
-                    <p>${item.dateTime}</p>
-                </li>
-                `;
-            });
-            // 3.4.2 replace comments
-            data = data.toString().replace('<!-- comments -->', commentStr);
-            // 3.4.3 response
-            res.end(data);
-        });
-    } else if (url === '/post') {
-        fs.readFile('./views/post.html', function (err, data) {
-            if (err) {
-                return res.end('404 Not Found');
-            }
-            res.end(data);
-        });
-    } else if (url.indexOf('/public/') === 0) {
-        fs.readFile('.' + url, function (err, data) {
-            if (err) {
-                return res.end('404 Not Found');
-            }
-            res.end(data);
-        });
-    } else if (url === '/comment' && method === 'POST') {
-        // 3.4.4 parse post data
-        let postData = '';
-        req.on('data', function (chunk) {
-            postData += chunk;
-        });
-        req.on('end', function (err) {
-            if (err) {
-                return res.end('404 Not Found');
-            }
-        });
+const express = require("express");
+const commentsRouter = express.Router({ mergeParams: true });
+const { check, validationResult } = require("express-validator");
+const { Comment } = require("../db/models");
+const { asyncHandler, csrfProtection } = require("./utils");
+const { requireAuth } = require("../auth");
+
+const commentValidators = [
+  check("comment")
+    .exists({ checkFalsy: true })
+    .withMessage("Please provide a comment"),
+];
+
+commentsRouter.post(
+  "/",
+  requireAuth,
+  commentValidators,
+  csrfProtection,
+  asyncHandler(async (req, res) => {
+    const { comment } = req.body;
+    const { id } = req.params;
+    const { userId } = req.session.auth;
+    const validatorErrors = validationResult(req);
+    if (validatorErrors.isEmpty()) {
+      const newComment = await Comment.create({
+        userId,
+        postId: id,
+        comment,
+      });
+      res.redirect(`/posts/${id}`);
+    } else {
+      const errors = validatorErrors.array().map((error) => error.msg);
+      res.render("post-detail", {
+        id,
+        comment,
+        errors,
+        csrfToken: req.csrfToken(),
+      });
     }
-});
+  })
+);
+
+commentsRouter.delete(
+  "/:commentId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { commentId } = req.params;
+    const comment = await Comment.findByPk(commentId);
+    await comment.destroy();
+    res.redirect(`/posts/${comment.postId}`);
+  })
+);
+
+module.exports = commentsRouter;
